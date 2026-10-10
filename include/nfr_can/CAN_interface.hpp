@@ -261,23 +261,25 @@ struct ICAN_Message {
     virtual CAN_Message_ID get_id() const = 0;
     virtual uint8_t length() const = 0;
     virtual uint8_t get_num_signals() const = 0;
+    virtual void executeCallback() = 0;
 
     virtual void decode_from(const CAN_Frame& frame) = 0;
     virtual void encode_to_frame(CAN_Frame& frame) const = 0;
     virtual bool attach_rx_callback(std::function<void()> callback) = 0;
 
     virtual ICAN_Signal* get_signal(uint8_t index) = 0;
+
+    bool _pending = false;
 };
 
 class CAN_Bus {
     std::unique_ptr<ICAN> _can;
     std::unordered_map<CAN_Message_ID, ICAN_Message*, MsgKeyHash> _rx_map;
+    std::vector<CAN_Message_ID> _callback_queue;
 
    public:
-    CAN_Bus(std::unique_ptr<ICAN> can) : _can(std::move(can)) {
-    }
-    CAN_Bus() : _can(nullptr) {
-    }
+    CAN_Bus(std::unique_ptr<ICAN> can) : _can(std::move(can)) {}
+    CAN_Bus() : _can(nullptr) {}
 
     std::vector<ICAN_Message*> get_messages() {
         std::vector<ICAN_Message*> messagePtrs;
@@ -307,6 +309,7 @@ class CAN_Bus {
         if (!inserted) {
             throw std::runtime_error("Duplicate message key registered");
         }
+        _callback_queue.reserve(_rx_map.size());
     }
 
     void unregister_message(ICAN_Message& msg) {
@@ -352,8 +355,21 @@ class CAN_Bus {
             auto it = _rx_map.find(k);
             if (it != _rx_map.end() && it->second) {
                 it->second->decode_from(rx_msg);
+                if (!it->second->_pending) {
+                    _callback_queue.push_back(k);
+                    it->second->_pending = true;
+                }
             }
         }
+
+        for (const auto& k : _callback_queue) {
+            auto it = _rx_map.find(k);
+            if (it == _rx_map.end() || !it->second) continue;
+            it->second->_pending = false;
+            it->second->executeCallback();
+        }
+
+        _callback_queue.clear();
     }
 
     ICAN *get_driver() {
@@ -530,10 +546,6 @@ class CAN_Message : public ICAN_Message {
                 _signals.at(i)->decode(data);
             }
 
-            if (_callback_function) {
-                _callback_function();
-            }
-
             _last_recv_time = _bus.get_time();
         }
     }
@@ -593,6 +605,10 @@ class CAN_Message : public ICAN_Message {
 
     uint32_t getLastRecvTimeMS() {
         return _last_recv_time;
+    }
+
+    void executeCallback() override {
+        if (_callback_function) _callback_function();
     }
 
    private:

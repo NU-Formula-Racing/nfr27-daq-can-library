@@ -26,7 +26,7 @@ public:
     }
 
     bool gpio_read(GpioLevel& out) override {
-        if (_mode == GpioMode::G_OUTPUT) return false
+        if (_mode == GpioMode::G_OUTPUT) return false;
 
         out = digitalRead(_pin) ? GpioLevel::G_HIGH : GpioLevel::G_LOW;
         return true;
